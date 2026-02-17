@@ -9,10 +9,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ocmworkv1 "open-cluster-management.io/api/work/v1"
 	viewv1beta1 "open-cluster-management.io/multicloud-operators-subscription/pkg/apis/view/v1beta1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ramen "github.com/ramendr/ramen/api/v1alpha1"
 	"github.com/ramendr/ramen/internal/controller/util"
 )
+
+// getPlacementForDRPC retrieves the placement object for the given DRPC using the PlacementAdapter
+// from the DRCluster reconciler. Falls back to the legacy function if no adapter is configured.
+func (u *drclusterInstance) getPlacementForDRPC(drpc *ramen.DRPlacementControl) (client.Object, error) {
+	if u.reconciler.PlacementAdapter != nil {
+		return u.reconciler.PlacementAdapter.GetPlacementObject(u.ctx, drpc.Spec.PlacementRef, drpc.Namespace)
+	}
+
+	return getPlacementOrPlacementRule(u.ctx, u.client, drpc, u.log)
+}
 
 // clusterMModeHandler handles all related maintenance modes that the DRCluster needs
 // to manage
@@ -70,7 +81,7 @@ func (u *drclusterInstance) mModeActivationsRequired() (map[string]ramen.Storage
 			continue
 		}
 
-		placementObj, err := getPlacementOrPlacementRule(u.ctx, u.client, drpcCollection.drpc, u.log)
+		placementObj, err := u.getPlacementForDRPC(drpcCollection.drpc)
 		if err != nil {
 			return nil, err
 		}
@@ -115,7 +126,7 @@ func (u *drclusterInstance) getVRGs(drpcCollection DRPCAndPolicy) (map[string]*r
 		return nil, err
 	}
 
-	placementObj, err := getPlacementOrPlacementRule(u.ctx, u.client, drpcCollection.drpc, u.log)
+	placementObj, err := u.getPlacementForDRPC(drpcCollection.drpc)
 	if err != nil {
 		return nil, err
 	}

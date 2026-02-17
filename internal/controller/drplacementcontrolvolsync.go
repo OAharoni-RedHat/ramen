@@ -204,6 +204,14 @@ func (d *DRPCInstance) EnsureVolSyncReplicationSetup(srcCluster string) error {
 		return nil
 	}
 
+	// On OCM-only hubs (no ACM), VolSync must be pre-installed on managed clusters.
+	// Log guidance if the PlacementAdapter indicates ACM is not present.
+	if d.reconciler.PlacementAdapter != nil && !d.reconciler.PlacementAdapter.SupportsPlacementRule() {
+		d.log.Info("VolSync replication required on OCM hub (no ACM). "+
+			"Ensure VolSync operator is pre-installed on all managed clusters. "+
+			"If VolSync is not installed, VRG reconciliation will fail on the managed clusters.")
+	}
+
 	// Now we should have a source and destination VRG created
 	// Since we will use VolSync - create/ensure & propagate a shared psk rsynctls secret to both the src and dst clusters
 	pskSecretNameHub := fmt.Sprintf("%s-vs-secret-hub", d.instance.GetName())

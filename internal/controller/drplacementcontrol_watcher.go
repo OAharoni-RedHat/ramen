@@ -688,13 +688,24 @@ func (r *DRPlacementControlReconciler) setupWithManagerAndAddWatchers(mgr ctrl.M
 		options.RateLimiter = *r.RateLimiter
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	controllerBuilder := ctrl.NewControllerManagedBy(mgr).
 		WithOptions(options).
 		For(&rmn.DRPlacementControl{}).
 		Watches(&ocmworkv1.ManifestWork{}, mwMapFun, builder.WithPredicates(mwPred)).
-		Watches(&viewv1beta1.ManagedClusterView{}, mcvMapFun, builder.WithPredicates(mcvPred)).
-		Watches(&plrv1.PlacementRule{}, usrPlRuleMapFun, builder.WithPredicates(usrPlRulePred)).
-		Watches(&clrapiv1beta1.Placement{}, usrPlmntMapFun, builder.WithPredicates(usrPlmntPred)).
+		Watches(&viewv1beta1.ManagedClusterView{}, mcvMapFun, builder.WithPredicates(mcvPred))
+
+	// Delegate placement watches to the adapter: ACM hubs watch both PlacementRule + Placement;
+	// OCM hubs watch only Placement (PlacementRule CRD does not exist without ACM).
+	if r.PlacementAdapter != nil {
+		if err := r.PlacementAdapter.SetupWatches(controllerBuilder,
+			usrPlRuleMapFun, usrPlRulePred,
+			usrPlmntMapFun, usrPlmntPred,
+		); err != nil {
+			return err
+		}
+	}
+
+	return controllerBuilder.
 		Watches(&rmn.DRCluster{}, drClusterMapFun, builder.WithPredicates(drClusterPred)).
 		Watches(&rmn.DRPolicy{}, drPolicyMapFun, builder.WithPredicates(drPolicyPred)).
 		Complete(r)

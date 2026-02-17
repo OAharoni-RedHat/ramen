@@ -47,6 +47,7 @@ type DRClusterReconciler struct {
 	ObjectStoreGetter ObjectStoreGetter
 	RateLimiter       *workqueue.TypedRateLimiter[reconcile.Request]
 	AddonDeployer     acm.AddonDeployer
+	PlacementAdapter  acm.PlacementAdapter
 }
 
 // DRCluster condition reasons
@@ -351,6 +352,7 @@ func filterDRClusterSecret(ctx context.Context, reader client.Reader, secret *co
 // +kubebuilder:rbac:groups=ramendr.openshift.io,resources=drplacementcontrols,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ramendr.openshift.io,resources=drpolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=managedclusteraddons,verbs=get;list;watch;create;update;patch
+// NOTE: managedclusteraddons RBAC is ACM-specific. On OCM-only hubs (no ACM), this permission is unused and harmless.
 // +kubebuilder:rbac:groups=work.open-cluster-management.io,resources=manifestworks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=view.open-cluster-management.io,resources=managedclusterviews,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps.open-cluster-management.io,resources=placementrules,verbs=get;list;watch

@@ -11,6 +11,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/ramendr/ramen/internal/controller/util"
 )
@@ -69,6 +70,8 @@ type AddonDeployer interface {
 // OCM backend supports only Placement.
 type PlacementAdapter interface {
 	// GetPlacementObject retrieves a placement object (PlacementRule or Placement) by reference.
+	// If ref.Kind is empty, ACM hubs try PlacementRule first then Placement (backward compatible).
+	// OCM hubs default to Placement when Kind is empty.
 	GetPlacementObject(
 		ctx context.Context,
 		ref corev1.ObjectReference,
@@ -79,5 +82,11 @@ type PlacementAdapter interface {
 	SupportsPlacementRule() bool
 
 	// SetupWatches configures the controller watches for placement-related resources.
-	SetupWatches(builder *ctrl.Builder, handler handler.EventHandler) error
+	// The PlacementRule handler/predicate are only used on ACM hubs. OCM hubs ignore them
+	// and only watch Placement resources.
+	SetupWatches(
+		b *ctrl.Builder,
+		plRuleHandler handler.EventHandler, plRulePred predicate.Predicate,
+		placementHandler handler.EventHandler, placementPred predicate.Predicate,
+	) error
 }

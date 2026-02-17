@@ -279,6 +279,7 @@ func setupReconcilersHub(mgr ctrl.Manager) {
 		},
 		ObjectStoreGetter: controllers.S3ObjectStoreGetter(),
 		AddonDeployer:     addonDeployer,
+		PlacementAdapter:  placementAdapter,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DRCluster")
 		os.Exit(1)

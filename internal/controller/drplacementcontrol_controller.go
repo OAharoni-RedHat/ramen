@@ -162,7 +162,7 @@ func (r *DRPlacementControlReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	var placementObj client.Object
 
-	placementObj, err = getPlacementOrPlacementRule(ctx, r.Client, drpc, logger)
+	placementObj, err = r.getPlacementForDRPC(ctx, drpc, logger)
 	if err != nil && !(k8serrors.IsNotFound(err) && rmnutil.ResourceIsDeleted(drpc)) {
 		r.recordFailure(ctx, drpc, placementObj, "Error", err.Error(), logger)
 
@@ -918,6 +918,22 @@ func (r *DRPlacementControlReconciler) updateAndSetOwner(
 	}
 
 	return r.setDRPCOwner(ctx, drpc, usrPlacement, log)
+}
+
+// getPlacementForDRPC retrieves the placement object for the given DRPC using the PlacementAdapter.
+// Falls back to the legacy getPlacementOrPlacementRule if no adapter is configured.
+func (r *DRPlacementControlReconciler) getPlacementForDRPC(
+	ctx context.Context,
+	drpc *rmn.DRPlacementControl,
+	log logr.Logger,
+) (client.Object, error) {
+	if r.PlacementAdapter != nil {
+		log.Info("Getting user placement object via adapter", "placementRef", drpc.Spec.PlacementRef)
+
+		return r.PlacementAdapter.GetPlacementObject(ctx, drpc.Spec.PlacementRef, drpc.Namespace)
+	}
+
+	return getPlacementOrPlacementRule(ctx, r.Client, drpc, log)
 }
 
 func getPlacementOrPlacementRule(
@@ -2769,7 +2785,7 @@ func (r *DRPlacementControlReconciler) getProtectedNamespaces(drpc *rmn.DRPlacem
 		return *drpc.Spec.ProtectedNamespaces, nil
 	}
 
-	placementObj, err := getPlacementOrPlacementRule(context.TODO(), r.Client, drpc, log)
+	placementObj, err := r.getPlacementForDRPC(context.TODO(), drpc, log)
 	if err != nil {
 		return []string{}, err
 	}

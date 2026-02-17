@@ -11,8 +11,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clrapiv1beta1 "open-cluster-management.io/api/cluster/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // ocmPlacementAdapter implements PlacementAdapter supporting only OCM Placement.
@@ -40,7 +42,7 @@ func (o *ocmPlacementAdapter) GetPlacementObject(
 				"Please migrate to Placement (apiVersion: cluster.open-cluster-management.io/v1beta1, " +
 				"kind: Placement). See Ramen documentation for migration guide")
 
-	case "Placement":
+	case "Placement", "":
 		p := &clrapiv1beta1.Placement{}
 		key := types.NamespacedName{Name: ref.Name, Namespace: namespace}
 
@@ -59,8 +61,12 @@ func (o *ocmPlacementAdapter) SupportsPlacementRule() bool {
 	return false
 }
 
-func (o *ocmPlacementAdapter) SetupWatches(b *ctrl.Builder, h handler.EventHandler) error {
-	(*b).Watches(&clrapiv1beta1.Placement{}, h)
+func (o *ocmPlacementAdapter) SetupWatches(
+	b *ctrl.Builder,
+	_ handler.EventHandler, _ predicate.Predicate,
+	placementHandler handler.EventHandler, placementPred predicate.Predicate,
+) error {
+	(*b).Watches(&clrapiv1beta1.Placement{}, placementHandler, builder.WithPredicates(placementPred))
 
 	return nil
 }
