@@ -17,7 +17,6 @@ import (
 
 	rmn "github.com/ramendr/ramen/api/v1alpha1"
 	"github.com/ramendr/ramen/internal/controller/util"
-	"github.com/ramendr/ramen/internal/controller/volsync"
 )
 
 func drClusterDeploy(drClusterInstance *drclusterInstance, ramenConfig *rmn.RamenConfig) error {
@@ -40,10 +39,12 @@ func drClusterDeploy(drClusterInstance *drclusterInstance, ramenConfig *rmn.Rame
 		}
 
 		// Deploy volsync to dr cluster
-		err = volsync.DeployVolSyncToCluster(drClusterInstance.ctx, drClusterInstance.client, drcluster.GetName(),
-			drClusterInstance.log)
-		if err != nil {
-			return fmt.Errorf("unable to deploy volsync to drcluster: %w", err)
+		if drClusterInstance.reconciler.AddonDeployer != nil {
+			err = drClusterInstance.reconciler.AddonDeployer.DeployAddon(
+				drClusterInstance.ctx, "volsync", drcluster.GetName())
+			if err != nil {
+				return fmt.Errorf("unable to deploy volsync to drcluster: %w", err)
+			}
 		}
 	}
 

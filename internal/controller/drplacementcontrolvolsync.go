@@ -226,8 +226,14 @@ func (d *DRPCInstance) EnsureVolSyncReplicationSetup(srcCluster string) error {
 		clustersToPropagateSecret = append(clustersToPropagateSecret, drCluster.Name)
 	}
 
-	err = volsync.PropagateSecretToClusters(d.ctx, d.reconciler.Client, pskSecretHub,
-		d.instance, clustersToPropagateSecret, pskSecretNameCluster, d.vrgNamespace, d.log)
+	if d.reconciler.VolSyncSecretProp != nil {
+		err = d.reconciler.VolSyncSecretProp.PropagateSecretToClusters(d.ctx, pskSecretHub,
+			d.instance, clustersToPropagateSecret, pskSecretNameCluster, d.vrgNamespace)
+	} else {
+		err = volsync.PropagateSecretToClusters(d.ctx, d.reconciler.Client, pskSecretHub,
+			d.instance, clustersToPropagateSecret, pskSecretNameCluster, d.vrgNamespace, d.log)
+	}
+
 	if err != nil {
 		d.log.Error(err, "Error propagating secret to clusters", "clustersToPropagateSecret", clustersToPropagateSecret)
 

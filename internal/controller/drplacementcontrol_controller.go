@@ -27,10 +27,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rmn "github.com/ramendr/ramen/api/v1alpha1"
+	"github.com/ramendr/ramen/internal/controller/acm"
 	argocdv1alpha1hack "github.com/ramendr/ramen/internal/controller/argocd"
 	core "github.com/ramendr/ramen/internal/controller/core"
 	rmnutil "github.com/ramendr/ramen/internal/controller/util"
-	"github.com/ramendr/ramen/internal/controller/volsync"
 )
 
 const (
@@ -84,6 +84,8 @@ type DRPlacementControlReconciler struct {
 	ObjStoreGetter                 ObjectStoreGetter
 	RateLimiter                    *workqueue.TypedRateLimiter[reconcile.Request]
 	numClustersQueriedSuccessfully int
+	PlacementAdapter               acm.PlacementAdapter
+	VolSyncSecretProp              acm.VolSyncSecretPropagator
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -711,9 +713,11 @@ func (r *DRPlacementControlReconciler) finalizeDRPC(ctx context.Context, drpc *r
 		return fmt.Errorf("failed to get DRPolicy while finalizing DRPC (%w)", err)
 	}
 
-	// Cleanup volsync secret-related resources (policy/plrule/binding)
-	if err := volsync.CleanupSecretPropagation(ctx, r.Client, drpc, r.Log); err != nil {
-		return fmt.Errorf("failed to clean up volsync secret-related resources (%w)", err)
+	// Cleanup volsync secret-related resources (policy/plrule/binding or ManifestWork)
+	if r.VolSyncSecretProp != nil {
+		if err := r.VolSyncSecretProp.CleanupSecretPropagation(ctx, drpc); err != nil {
+			return fmt.Errorf("failed to clean up volsync secret-related resources (%w)", err)
+		}
 	}
 
 	// cleanup for VRG artifacts

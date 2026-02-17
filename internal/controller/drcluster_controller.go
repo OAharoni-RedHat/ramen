@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	ramen "github.com/ramendr/ramen/api/v1alpha1"
+	"github.com/ramendr/ramen/internal/controller/acm"
 	"github.com/ramendr/ramen/internal/controller/util"
 )
 
@@ -45,6 +46,7 @@ type DRClusterReconciler struct {
 	MCVGetter         util.ManagedClusterViewGetter
 	ObjectStoreGetter ObjectStoreGetter
 	RateLimiter       *workqueue.TypedRateLimiter[reconcile.Request]
+	AddonDeployer     acm.AddonDeployer
 }
 
 // DRCluster condition reasons

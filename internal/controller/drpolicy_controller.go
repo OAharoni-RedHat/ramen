@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	ramen "github.com/ramendr/ramen/api/v1alpha1"
+	"github.com/ramendr/ramen/internal/controller/acm"
 	"github.com/ramendr/ramen/internal/controller/util"
 )
 
@@ -39,6 +40,7 @@ type DRPolicyReconciler struct {
 	MCVGetter         util.ManagedClusterViewGetter
 	ObjectStoreGetter ObjectStoreGetter
 	RateLimiter       *workqueue.TypedRateLimiter[reconcile.Request]
+	SecretPropagator  acm.SecretPropagator
 }
 
 // ReasonValidationFailed is set when the DRPolicy could not be validated or is not valid
@@ -108,11 +110,10 @@ func (r *DRPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, fmt.Errorf("drclusters details: %w", u.validatedSetFalse("drClusterDetailsFailed", err))
 	}
 
-	secretsUtil := &util.SecretsUtil{Client: r.Client, APIReader: r.APIReader, Ctx: ctx, Log: log}
 	// DRPolicy is marked for deletion
 	if util.ResourceIsDeleted(drpolicy) &&
 		controllerutil.ContainsFinalizer(drpolicy, drPolicyFinalizerName) {
-		return ctrl.Result{}, u.deleteDRPolicy(drclusters, secretsUtil, ramenConfig)
+		return ctrl.Result{}, u.deleteDRPolicy(drclusters, r.SecretPropagator, ramenConfig)
 	}
 
 	log.Info("create/update")
@@ -134,14 +135,14 @@ func (r *DRPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, fmt.Errorf("finalizer add update: %w", u.validatedSetFalse("FinalizerAddFailed", err))
 	}
 
-	return r.reconcile(u, drclusters, secretsUtil, ramenConfig, drClusterIDsToNames)
+	return r.reconcile(u, drclusters, r.SecretPropagator, ramenConfig, drClusterIDsToNames)
 }
 
 //nolint:unparam
 func (r *DRPolicyReconciler) reconcile(
 	u *drpolicyUpdater,
 	drclusters *ramen.DRClusterList,
-	secretsUtil *util.SecretsUtil,
+	secretPropagator acm.SecretPropagator,
 	ramenConfig *ramen.RamenConfig,
 	drClusterIDsToNames map[string]string,
 ) (ctrl.Result, error) {
@@ -153,7 +154,7 @@ func (r *DRPolicyReconciler) reconcile(
 		return ctrl.Result{}, fmt.Errorf("drpolicy peerClass update: %w", err)
 	}
 
-	if err := propagateS3Secret(u.object, drclusters, secretsUtil, ramenConfig, u.log); err != nil {
+	if err := propagateS3Secret(u.object, drclusters, secretPropagator, ramenConfig, u.log); err != nil {
 		return ctrl.Result{}, fmt.Errorf("drpolicy deploy: %w", err)
 	}
 
@@ -383,13 +384,13 @@ type drpolicyUpdater struct {
 }
 
 func (u *drpolicyUpdater) deleteDRPolicy(drclusters *ramen.DRClusterList,
-	secretsUtil *util.SecretsUtil,
+	secretPropagator acm.SecretPropagator,
 	ramenConfig *ramen.RamenConfig,
 ) error {
 	u.log.Info("delete")
 
 	drpcs := ramen.DRPlacementControlList{}
-	if err := secretsUtil.Client.List(secretsUtil.Ctx, &drpcs); err != nil {
+	if err := u.client.List(u.ctx, &drpcs); err != nil {
 		return fmt.Errorf("drpcs list: %w", err)
 	}
 
@@ -400,7 +401,7 @@ func (u *drpolicyUpdater) deleteDRPolicy(drclusters *ramen.DRClusterList,
 		}
 	}
 
-	if err := drPolicyUndeploy(u.object, drclusters, secretsUtil, ramenConfig, u.log); err != nil {
+	if err := drPolicyUndeploy(u.ctx, u.client, u.object, drclusters, secretPropagator, ramenConfig, u.log); err != nil {
 		return fmt.Errorf("drpolicy undeploy: %w", err)
 	}
 

@@ -4,13 +4,16 @@
 package controllers
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rmn "github.com/ramendr/ramen/api/v1alpha1"
+	"github.com/ramendr/ramen/internal/controller/acm"
 	"github.com/ramendr/ramen/internal/controller/util"
 )
 
@@ -19,7 +22,7 @@ var drClustersMutex sync.Mutex
 func propagateS3Secret(
 	drpolicy *rmn.DRPolicy,
 	drclusters *rmn.DRClusterList,
-	secretsUtil *util.SecretsUtil,
+	secretPropagator acm.SecretPropagator,
 	hubOperatorRamenConfig *rmn.RamenConfig,
 	log logr.Logger,
 ) error {
@@ -27,7 +30,7 @@ func propagateS3Secret(
 	defer drClustersMutex.Unlock()
 
 	for _, clusterName := range util.DRPolicyClusterNames(drpolicy) {
-		if err := drClusterSecretsDeploy(clusterName, drpolicy, drclusters, secretsUtil,
+		if err := drClusterSecretsDeploy(clusterName, drpolicy, drclusters, secretPropagator,
 			hubOperatorRamenConfig, log); err != nil {
 			return err
 		}
@@ -40,7 +43,7 @@ func drClusterSecretsDeploy(
 	clusterName string,
 	drpolicy *rmn.DRPolicy,
 	drclusters *rmn.DRClusterList,
-	secretsUtil *util.SecretsUtil,
+	secretPropagator acm.SecretPropagator,
 	rmnCfg *rmn.RamenConfig,
 	log logr.Logger,
 ) error {
@@ -61,10 +64,10 @@ func drClusterSecretsDeploy(
 	}
 
 	for _, secretName := range drPolicySecrets.List() {
-		if err := secretsUtil.AddSecretToCluster(
+		if err := secretPropagator.PropagateSecretToCluster(
 			secretName,
-			clusterName,
 			RamenOperatorNamespace(),
+			clusterName,
 			drClusterOperatorNamespaceNameOrDefault(rmnCfg),
 			util.SecretFormatRamen,
 			"",
@@ -73,10 +76,10 @@ func drClusterSecretsDeploy(
 		}
 
 		if !rmnCfg.KubeObjectProtection.Disabled && rmnCfg.KubeObjectProtection.VeleroNamespaceName != "" {
-			if err := secretsUtil.AddSecretToCluster(
+			if err := secretPropagator.PropagateSecretToCluster(
 				secretName,
-				clusterName,
 				RamenOperatorNamespace(),
+				clusterName,
 				drClusterOperatorNamespaceNameOrDefault(rmnCfg),
 				util.SecretFormatVelero,
 				rmnCfg.KubeObjectProtection.VeleroNamespaceName,
@@ -91,9 +94,11 @@ func drClusterSecretsDeploy(
 }
 
 func drPolicyUndeploy(
+	ctx context.Context,
+	k8sClient client.Client,
 	drpolicy *rmn.DRPolicy,
 	drclusters *rmn.DRClusterList,
-	secretsUtil *util.SecretsUtil,
+	secretPropagator acm.SecretPropagator,
 	ramenConfig *rmn.RamenConfig,
 	log logr.Logger,
 ) error {
@@ -102,18 +107,18 @@ func drPolicyUndeploy(
 	drClustersMutex.Lock()
 	defer drClustersMutex.Unlock()
 
-	if err := secretsUtil.Client.List(secretsUtil.Ctx, &drpolicies); err != nil {
+	if err := k8sClient.List(ctx, &drpolicies); err != nil {
 		return fmt.Errorf("drpolicies list: %w", err)
 	}
 
-	return drClustersUndeploySecrets(drpolicy, drclusters, drpolicies, secretsUtil, ramenConfig, log)
+	return drClustersUndeploySecrets(drpolicy, drclusters, drpolicies, secretPropagator, ramenConfig, log)
 }
 
 func drClustersUndeploySecrets(
 	drpolicy *rmn.DRPolicy,
 	drclusters *rmn.DRClusterList,
 	drpolicies rmn.DRPolicyList,
-	secretsUtil *util.SecretsUtil,
+	secretPropagator acm.SecretPropagator,
 	ramenConfig *rmn.RamenConfig,
 	log logr.Logger,
 ) error {
@@ -145,7 +150,7 @@ func drClustersUndeploySecrets(
 			}
 
 			// Delete s3profile secret from current cluster
-			if err := deleteSecretFromCluster(s3SecretToDelete, clusterName, ramenConfig, secretsUtil); err != nil {
+			if err := deleteSecretFromCluster(s3SecretToDelete, clusterName, ramenConfig, secretPropagator); err != nil {
 				return err
 			}
 		}
@@ -242,9 +247,9 @@ func drPolicySecretNames(drpolicy *rmn.DRPolicy,
 func deleteSecretFromCluster(
 	s3SecretToDelete, clusterName string,
 	ramenConfig *rmn.RamenConfig,
-	secretsUtil *util.SecretsUtil,
+	secretPropagator acm.SecretPropagator,
 ) error {
-	if err := secretsUtil.RemoveSecretFromCluster(
+	if err := secretPropagator.RemoveSecretFromCluster(
 		s3SecretToDelete,
 		clusterName,
 		RamenOperatorNamespace(),
@@ -255,7 +260,7 @@ func deleteSecretFromCluster(
 	}
 
 	if !ramenConfig.KubeObjectProtection.Disabled && ramenConfig.KubeObjectProtection.VeleroNamespaceName != "" {
-		if err := secretsUtil.RemoveSecretFromCluster(
+		if err := secretPropagator.RemoveSecretFromCluster(
 			s3SecretToDelete,
 			clusterName,
 			RamenOperatorNamespace(),

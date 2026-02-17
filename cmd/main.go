@@ -40,6 +40,7 @@ import (
 
 	ramendrv1alpha1 "github.com/ramendr/ramen/api/v1alpha1"
 	controllers "github.com/ramendr/ramen/internal/controller"
+	"github.com/ramendr/ramen/internal/controller/acm"
 	argocdv1alpha1hack "github.com/ramendr/ramen/internal/controller/argocd"
 	rmnutil "github.com/ramendr/ramen/internal/controller/util"
 	// +kubebuilder:scaffold:imports
@@ -106,15 +107,16 @@ func configureController(ramenConfig *ramendrv1alpha1.RamenConfig) error {
 	setupLog.Info("controller type", "type", controllers.ControllerType)
 
 	if controllers.ControllerType == ramendrv1alpha1.DRHubType {
-		utilruntime.Must(plrv1.AddToScheme(scheme))
+		// Common OCM schemes (always needed for hub)
 		utilruntime.Must(ocmworkv1.AddToScheme(scheme))
 		utilruntime.Must(viewv1beta1.AddToScheme(scheme))
-		utilruntime.Must(cpcv1.AddToScheme(scheme))
-		utilruntime.Must(gppv1.AddToScheme(scheme))
 		utilruntime.Must(argocdv1alpha1hack.AddToScheme(scheme))
 		utilruntime.Must(clrapiv1beta1.AddToScheme(scheme))
 		utilruntime.Must(recipe.AddToScheme(scheme))
 		utilruntime.Must(ocmv1.AddToScheme(scheme))
+		utilruntime.Must(apiextensions.AddToScheme(scheme))
+		// ACM-specific schemes (plrv1, cpcv1, gppv1) are registered conditionally
+		// in setupReconcilersHub() after ACM detection.
 	} else {
 		utilruntime.Must(velero.AddToScheme(scheme))
 		utilruntime.Must(volrep.AddToScheme(scheme))
@@ -213,6 +215,43 @@ func setupReconcilersCluster(mgr ctrl.Manager, ramenConfig *ramendrv1alpha1.Rame
 }
 
 func setupReconcilersHub(mgr ctrl.Manager) {
+	// Detect ACM availability at startup
+	acmDetected, err := acm.DetectACM(context.Background(), mgr.GetAPIReader())
+	if err != nil {
+		setupLog.Error(err, "Failed to detect ACM availability")
+		os.Exit(1)
+	}
+
+	// Declare interface variables for backend injection
+	var secretPropagator acm.SecretPropagator
+	var volSyncSecretProp acm.VolSyncSecretPropagator
+	var addonDeployer acm.AddonDeployer
+	var placementAdapter acm.PlacementAdapter
+
+	hubLog := ctrl.Log.WithName("hub-setup")
+
+	if acmDetected {
+		setupLog.Info("ACM detected — using ACM backends")
+		// Register ACM-specific schemes
+		utilruntime.Must(plrv1.AddToScheme(scheme))
+		utilruntime.Must(cpcv1.AddToScheme(scheme))
+		utilruntime.Must(gppv1.AddToScheme(scheme))
+
+		secretPropagator = acm.NewACMSecretPropagator(
+			mgr.GetClient(), mgr.GetAPIReader(), context.Background(), hubLog)
+		volSyncSecretProp = acm.NewACMVolSyncSecretPropagator(mgr.GetClient())
+		addonDeployer = acm.NewACMAddonDeployer(mgr.GetClient(), hubLog)
+		placementAdapter = acm.NewACMPlacementAdapter(mgr.GetClient())
+	} else {
+		setupLog.Info("ACM not detected — using OCM-native backends")
+
+		secretPropagator = acm.NewOCMSecretPropagator(
+			mgr.GetClient(), mgr.GetAPIReader(), context.Background(), hubLog)
+		volSyncSecretProp = acm.NewOCMVolSyncSecretPropagator(mgr.GetClient(), hubLog)
+		addonDeployer = acm.NewOCMAddonDeployer(mgr.GetClient(), hubLog)
+		placementAdapter = acm.NewOCMPlacementAdapter(mgr.GetClient())
+	}
+
 	if err := (&controllers.DRPolicyReconciler{
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
@@ -223,6 +262,7 @@ func setupReconcilersHub(mgr ctrl.Manager) {
 			APIReader: mgr.GetAPIReader(),
 		},
 		ObjectStoreGetter: controllers.S3ObjectStoreGetter(),
+		SecretPropagator:  secretPropagator,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DRPolicy")
 		os.Exit(1)
@@ -238,6 +278,7 @@ func setupReconcilersHub(mgr ctrl.Manager) {
 			APIReader: mgr.GetAPIReader(),
 		},
 		ObjectStoreGetter: controllers.S3ObjectStoreGetter(),
+		AddonDeployer:     addonDeployer,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DRCluster")
 		os.Exit(1)
@@ -251,9 +292,11 @@ func setupReconcilersHub(mgr ctrl.Manager) {
 			Client:    mgr.GetClient(),
 			APIReader: mgr.GetAPIReader(),
 		},
-		Scheme:         mgr.GetScheme(),
-		Callback:       func(string, string) {},
-		ObjStoreGetter: controllers.S3ObjectStoreGetter(),
+		Scheme:            mgr.GetScheme(),
+		Callback:          func(string, string) {},
+		ObjStoreGetter:    controllers.S3ObjectStoreGetter(),
+		PlacementAdapter:  placementAdapter,
+		VolSyncSecretProp: volSyncSecretProp,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DRPlacementControl")
 		os.Exit(1)
